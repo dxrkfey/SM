@@ -3,6 +3,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const mysql = require("mysql2/promise");
+const multer = require("multer");
 
 const app = express();
 app.use(express.json());
@@ -26,31 +27,42 @@ const initMySQL = async () => {
   });
 };
 
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "picture/");
+  },
+  filename: (req, file, cb) => {
+    cb(null, "smoke.jpg");
+  },
+});
+
+const upload = multer({ storage });
+
 app.post("/register", async (req, res) => {
   const { email, password } = req.body;
   const hash = await bcrypt.hash(password, 10);
-  await conn.query(
-    `INSERT INTO user (email, password) 
-        VALUES ("${email}", "${hash}")`
-  );
+  await conn.query(`INSERT INTO user (Email, Password) VALUES (?, ?)`, [
+    email,
+    hash,
+  ]);
   res.send("Register Successfully");
 });
 
 app.post("/login", async (req, res) => {
   const { email, password } = req.body;
   const [result] = await conn.query(
-    "SELECT id, password from users WHERE email = ?",
-    email
+    "SELECT UserID, Password FROM user WHERE Email = ?",
+    [email]
   );
-  if (result.length == 0) {
-    return res.status(400).send("Wrong Email");
+  if (result.length === 0 || !result[0].Password) {
+    return res.status(400).send("Wrong Email or Password");
   }
-  const match = await bcrypt.compare(password, result[0].password);
+  const match = await bcrypt.compare(password, result[0].Password);
   if (!match) {
     return res.status(400).send("Wrong Email or Password");
   }
   const token = jwt.sign(
-    { email, userID: result[0].id, role: "admin" },
+    { email, userID: result[0].UserID, role: "admin" },
     secret,
     { expiresIn: "1h" }
   );
@@ -101,10 +113,10 @@ app.post("/edit-user", async (req, res) => {
 app.post("/edit-linetoken", async (req, res) => {
   try {
     const { lineToken, lineID } = req.body;
-    const user = isLogin(req);
-    if (!user) {
-      throw { message: "Auth Fail" };
-    }
+    // const user = isLogin(req);
+    // if (!user) {
+    //   throw { message: "Auth Fail" };
+    // }
     await conn.query("UPDATE line SET Token = ? WHERE LineID = ?", [
       lineToken,
       lineID,
@@ -116,12 +128,12 @@ app.post("/edit-linetoken", async (req, res) => {
 
 app.post("/add-linetoken", async (req, res) => {
   try {
-    const { lineToken } = req.body;
-    const user = isLogin(req);
-    if (!user) {
-      return res.status(401).json({ message: "Auth Fail" });
-    }
-    await conn.query("INSERT INTO Token (line, UserID) VALUES (?, ?)", [
+    // const { lineToken } = req.body;
+    // const user = isLogin(req);
+    // if (!user) {
+    //   return res.status(401).json({ message: "Auth Fail" });
+    // }
+    await conn.query("INSERT INTO token (line, UserID) VALUES (?, ?)", [
       lineToken,
       user.userID,
     ]);
@@ -132,19 +144,37 @@ app.post("/add-linetoken", async (req, res) => {
   }
 });
 
+app.get("/real-smoke", async (req, res) => {
+  try {
+    // const user = isLogin(req);
+    // if (!user) {
+    //   return res.status(401).json({ message: "Auth Fail" });
+    // }
+
+    const [result] = await conn.query(
+      `SELECT * FROM smoke.smoke 
+         ORDER BY DateTime DESC 
+         LIMIT 1`
+    );
+
+    res.status(200).json(result[0] || {});
+  } catch (error) {
+    console.error("error", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
 app.get("/smoke", async (req, res) => {
   try {
     const user = isLogin(req);
     if (!user) {
       return res.status(401).json({ message: "Auth Fail" });
     }
-
     const [result] = await conn.query(
       `SELECT * FROM smoke.smoke 
          WHERE DATE(DateTime) = CURDATE() 
          ORDER BY DateTime DESC`
     );
-
     res.status(200).json(result);
   } catch (error) {
     console.error("error", error);
@@ -158,7 +188,7 @@ app.get("/filter-smoke", async (req, res) => {
     if (!user) {
       return res.status(401).json({ message: "Auth Fail" });
     }
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate } = req.body;
     const [result] = await conn.query(
       `SELECT * FROM smoke.smoke 
          WHERE DATE(DateTime) BETWEEN ? AND ? 
@@ -173,38 +203,34 @@ app.get("/filter-smoke", async (req, res) => {
 });
 
 app.post("/add-smoke", async (req, res) => {
-    try {
-      const { status } = req.query;
-      if (!status) {
-        return res.status(400).json({ message: "Status is required" });
-      }
-  
-      const [lastRecord] = await conn.query(
-        `SELECT * FROM smoke.smoke ORDER BY DateTime DESC LIMIT 1`
+  try {
+    const { status } = req.body;
+    const [lastRecord] = await conn.query(
+      `SELECT * FROM smoke.smoke ORDER BY DateTime DESC LIMIT 1`
+    );
+    if (lastRecord.length > 0 && lastRecord[0].Status === status) {
+      const newTimeOfSmoke = lastRecord[0].TimeOfSmoke + 1;
+      await conn.query(`UPDATE smoke.smoke SET TimeOfSmoke = ? WHERE No = ?`, [
+        newTimeOfSmoke,
+        lastRecord[0].No,
+      ]);
+      return res.status(200).json({
+        message: "TimeOfSmoke updated successfully",
+      });
+    } else {
+      await conn.query(
+        `INSERT INTO smoke.smoke (Status, TimeOfSmoke) VALUES (?, ?)`,
+        [status, 1]
       );
-  
-      if (lastRecord.length > 0 && lastRecord[0].Status === status) {
-        const newTimeOfSmoke = lastRecord[0].TimeOfSmoke + 1;
-        await conn.query(
-          `UPDATE smoke.smoke SET TimeOfSmoke = ?, DateTime = NOW() WHERE No = ?`,
-          [newTimeOfSmoke, lastRecord[0].No]
-        );
-  
-        return res.status(200).json({ message: "TimeOfSmoke updated successfully" });
-      } else {
-        await conn.query(
-          `INSERT INTO smoke.smoke (Status, DateTime, TimeOfSmoke) VALUES (?, NOW(), ?)`,
-          [status, 1]
-        );
-  
-        return res.status(200).json({ message: "Status added successfully" });
-      }
-    } catch (error) {
-      console.error("error", error);
-      res.status(500).json({ message: "Internal Server Error" });
+      return res.status(200).json({ message: "Status added successfully" });
     }
-  });
-  
+  } catch (error) {
+    console.error("Detailed Error: ", error);
+    res
+      .status(500)
+      .json({ message: "Internal Server Error", error: error.message });
+  }
+});
 
 app.listen(port, async () => {
   await initMySQL();
