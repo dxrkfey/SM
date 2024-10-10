@@ -4,6 +4,8 @@ const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const mysql = require("mysql2/promise");
 const multer = require("multer");
+const line = require("./line");
+const path = require("path");
 
 const app = express();
 app.use(express.json());
@@ -37,6 +39,33 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage });
+
+const checkForSmoke = async () => {
+  try {
+    const [results] = await conn.query(
+      "SELECT * FROM smoke WHERE TimeOfSmoke = 5 AND Status = 'Black' ORDER BY No DESC LIMIT 1"
+    );
+
+    if (results.length > 0) {
+      const record = results[0];
+      const [user] = await conn.query("SELECT Token FROM line");
+
+      if (user.length > 0) {
+        const imagePath = path.join(__dirname, "picture", "smoke.jpg");
+
+        line.callLineApi(
+          user[0].LineToken,
+          "Smoke alert! Smoke is Black",
+          imagePath
+        );
+      }
+    }
+  } catch (error) {
+    console.error("Error checking smoke alert:", error);
+  }
+};
+
+setInterval(checkForSmoke, 10000);
 
 app.post("/register", async (req, res) => {
   const { email, password } = req.body;
@@ -76,10 +105,10 @@ app.post("/login", async (req, res) => {
 
 app.get("/user", async (req, res) => {
   try {
-    const user = isLogin(req);
-    if (!user) {
-      throw { message: "Auth Fail" };
-    }
+    // const user = isLogin(req);
+    // if (!user) {
+    //   throw { message: "Auth Fail" };
+    // }
     const [result] = await conn.query(
       `SELECT * FROM users WHERE ID = ${user.userID}`
     );
@@ -144,71 +173,151 @@ app.post("/add-linetoken", async (req, res) => {
   }
 });
 
-app.get("/real-smoke", async (req, res) => {
-  try {
-    // const user = isLogin(req);
-    // if (!user) {
-    //   return res.status(401).json({ message: "Auth Fail" });
-    // }
+// app.get("/real-smoke", async (req, res) => {
+//   try {
+//     // const user = isLogin(req);
+//     // if (!user) {
+//     //   return res.status(401).json({ message: "Auth Fail" });
+//     // }
 
-    const [result] = await conn.query(
-      `SELECT * FROM smoke.smoke 
-         ORDER BY DateTime DESC 
-         LIMIT 1`
-    );
+//     const [result] = await conn.query(
+//       `SELECT * FROM smoke.smoke
+//          ORDER BY date_time DESC
+//          LIMIT 1`
+//     );
 
-    res.status(200).json(result[0] || {});
-  } catch (error) {
-    console.error("error", error);
-    res.status(500).json({ message: "Internal Server Error" });
-  }
-});
+//     res.status(200).json(result[0] || {});
+//   } catch (error) {
+//     console.error("error", error);
+//     res.status(500).json({ message: "Internal Server Error" });
+//   }
+// });
+
+app.use("/images", express.static("picture"));
 
 app.get("/smoke", async (req, res) => {
   try {
-    const user = isLogin(req);
-    if (!user) {
-      return res.status(401).json({ message: "Auth Fail" });
-    }
     const [result] = await conn.query(
-      `SELECT * FROM smoke.smoke 
-         WHERE DATE(DateTime) = CURDATE() 
-         ORDER BY DateTime DESC`
+      `SELECT s.*, 
+              (SELECT COUNT(*) FROM smoke.smoke 
+               WHERE DATE(date_time) = CURDATE() AND Status = 1) AS BlackCount,
+              (SELECT COUNT(*) FROM smoke.smoke 
+               WHERE DATE(date_time) = CURDATE() AND Status = 0) AS WhiteCount
+       FROM smoke.smoke s
+       WHERE DATE(s.date_time) = CURDATE()
+       ORDER BY s.date_time DESC
+       LIMIT 1`
     );
-    res.status(200).json(result);
+    const data = result[0] || {};
+
+    const responseData = {
+      data: data,
+      imageUrl: `${req.protocol}://${req.get(
+        "host"
+      )}/images/101.109.253.60.8999.jpg`,
+      blackCount: data.BlackCount || 0,
+      whiteCount: data.WhiteCount || 0,
+    };
+
+    res.status(200).json(responseData);
   } catch (error) {
-    console.error("error", error);
+    console.error("Error fetching smoke data:", error);
     res.status(500).json({ message: "Internal Server Error" });
   }
 });
 
 app.get("/filter-smoke", async (req, res) => {
   try {
-    const user = isLogin(req);
-    if (!user) {
-      return res.status(401).json({ message: "Auth Fail" });
+    const { startDate, endDate } = req.query;
+    // First Query
+    let normalData =[];
+    try {
+      [normalData] = await conn.query(
+        `SELECT * FROM smoke 
+         WHERE date_time BETWEEN ? AND ?;`,
+        [startDate, endDate]
+      );
+      console.log("NOR", normalData);
+    } catch (error) {
+      console.error("Error in normalData query:", error);
+      res.status(500).json({ message: "Error in normalData query" });
+      return;
     }
-    const { startDate, endDate } = req.body;
-    const [result] = await conn.query(
-      `SELECT * FROM smoke.smoke 
-         WHERE DATE(DateTime) BETWEEN ? AND ? 
-         ORDER BY DateTime DESC`,
-      [startDate, endDate]
-    );
-    res.status(200).json(result);
+
+    // Second Query
+    let dailyData = [];
+    try {
+      [dailyData] = await conn.query(
+        `SELECT
+           SUM(CASE WHEN Status = 1 THEN 1 ELSE 0 END) AS Black,
+           SUM(CASE WHEN Status = 0 THEN 1 ELSE 0 END) AS White
+         FROM smoke.smoke
+         WHERE date_time BETWEEN ? AND ?
+         ORDER BY No DESC`,
+        [startDate, endDate]
+      );
+    } catch (error) {
+      console.error("Error in dailyData query:", error);
+      res.status(500).json({ message: "Error in dailyData query" });
+      return;
+    }
+
+    // Third Query
+    let monthlyData = [];
+    try {
+      [monthlyData] = await conn.query(
+        `   SELECT
+         SUM(CASE WHEN Status = 1 THEN 1 ELSE 0 END) AS Black,
+         SUM(CASE WHEN Status = 0 THEN 1 ELSE 0 END) AS White
+        FROM smoke.smoke
+        WHERE
+        YEAR(date_time) BETWEEN YEAR(?) AND YEAR(?) AND
+        MONTH(date_time) BETWEEN month(?) AND MONTH(?)
+        `,
+        [startDate, endDate, startDate, endDate]
+      );
+    } catch (error) {
+      console.error("Error in monthlyData query:", error);
+      res.status(500).json({ message: "Error in monthlyData query" });
+      return;
+    }
+
+    // Fourth Query
+    let yearlyData = [];
+    try {
+      [yearlyData] = await conn.query(
+        `SELECT
+         SUM(CASE WHEN Status = 1 THEN 1 ELSE 0 END) AS Black,
+         SUM(CASE WHEN Status = 0 THEN 1 ELSE 0 END) AS White
+        FROM smoke.smoke
+        WHERE
+        YEAR(date_time) BETWEEN YEAR(?) AND YEAR(?)`,
+        [startDate, endDate]
+      );
+    } catch (error) {
+      console.error("Error in yearlyData query:", error);
+      res.status(500).json({ message: "Error in yearlyData query" });
+      return;
+    }
+
+    res.status(200).json({ normalData, dailyData, monthlyData,yearlyData });
   } catch (error) {
-    console.error("error", error);
+    console.error("Error querying smoke data:", error);
     res.status(500).json({ message: "Internal Server Error" });
   }
 });
 
 app.post("/add-smoke", async (req, res) => {
   try {
-    const { status } = req.body;
-    const [lastRecord] = await conn.query(
-      `SELECT * FROM smoke.smoke ORDER BY DateTime DESC LIMIT 1`
+    const { result } = req.body;
+    const [lastStatusRecord] = await conn.query(
+      `SELECT Status FROM smoke.smoke ORDER BY No DESC LIMIT 1`
     );
-    if (lastRecord.length > 0 && lastRecord[0].Status === status) {
+    if (lastStatusRecord.length > 0 && lastStatusRecord[0].Status == result) {
+      const [lastRecord] = await conn.query(
+        `SELECT TimeOfSmoke, Status, No FROM smoke.smoke ORDER BY No DESC LIMIT 1`
+      );
+      console.log("last", lastRecord);
       const newTimeOfSmoke = lastRecord[0].TimeOfSmoke + 1;
       await conn.query(`UPDATE smoke.smoke SET TimeOfSmoke = ? WHERE No = ?`, [
         newTimeOfSmoke,
@@ -220,12 +329,12 @@ app.post("/add-smoke", async (req, res) => {
     } else {
       await conn.query(
         `INSERT INTO smoke.smoke (Status, TimeOfSmoke) VALUES (?, ?)`,
-        [status, 1]
+        [result, 1]
       );
       return res.status(200).json({ message: "Status added successfully" });
     }
   } catch (error) {
-    console.error("Detailed Error: ", error);
+    console.error("Detailed Error:", error);
     res
       .status(500)
       .json({ message: "Internal Server Error", error: error.message });

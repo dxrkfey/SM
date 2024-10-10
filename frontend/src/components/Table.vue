@@ -13,12 +13,11 @@
       <tbody>
         <tr v-for="(item, index) in data.data" :key="index"
           class="bg-white hover:bg-gray-100 transition-colors duration-200">
-          <td class="border px-4 py-2 text-sm text-gray-700">{{ item.no }}</td>
+          <td class="border px-4 py-2 text-sm text-gray-700">{{ item.No }}</td>
           <td class="border px-4 py-2 text-sm text-gray-700">{{ formatDate(item.date_time) }}</td>
           <td class="border px-4 py-2 text-sm text-gray-700">{{ formatTime(item.date_time) }}</td>
-          <td class="border px-4 py-2 text-sm text-gray-700">{{ item.blackTimeStatus }}</td>
-          <td class="border px-4 py-2 text-sm text-gray-700">{{ item.blackTimeSmoke }} mins {{
-            item.blackTimeSmokeSeconds }} secs</td>
+          <td class="border px-4 py-2 text-sm text-gray-700">{{ item.Status }}</td>
+          <td class="border px-4 py-2 text-sm text-gray-700">{{ item.TimeOfSmoke }} mins</td>
         </tr>
       </tbody>
     </table>
@@ -82,7 +81,6 @@ tbody tr:hover {
 
 .sticky {
   background-color: #f7fafc;
-  /* Ensure sticky header has a background */
   z-index: 50;
 }
 

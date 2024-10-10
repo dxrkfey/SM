@@ -1,4 +1,3 @@
-<!-- PieChart.vue -->
 <template>
   <div :id="props.chart_id" class="chart-container"></div>
 </template>
@@ -17,17 +16,11 @@ const props = defineProps<{
 }>();
 
 let chartInstance: Chart | null = null;
-
-
 const calculateTickInterval = () => {
-
   const targetLabels = 10;
-
   const timestamps = props.data.categories.map(date => new Date(date).getTime());
   const range = Math.max(...timestamps) - Math.min(...timestamps);
-
   const tickInterval = range / targetLabels;
-  
   return tickInterval;
 };
 
@@ -52,10 +45,10 @@ const createChart = () => {
     },
     xAxis: {
       type: 'datetime',
-      tickInterval: calculatedTickInterval, // Set dynamic tick interval
+      tickInterval: calculatedTickInterval, 
       labels: {
         format: '{value:%e %b %H:%M}',
-        rotation: calculatedTickInterval < 60 * 60 * 1000 ? -45 : 0, // Rotate labels for denser data
+        rotation: calculatedTickInterval < 60 * 60 * 1000 ? -45 : 0, 
         align: calculatedTickInterval < 60 * 60 * 1000 ? 'right' : 'center',
         style: {
           fontSize: '10px',
@@ -148,7 +141,6 @@ const updateChart = () => {
     },
   }, false);
 
-  // Update series data
   chartInstance.series.forEach((series, index) => {
     const seriesOptions = props.data.series[index];
     if (seriesOptions.data) {
