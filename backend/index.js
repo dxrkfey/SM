@@ -6,6 +6,17 @@ const mysql = require("mysql2/promise");
 const multer = require("multer");
 const line = require("./line");
 const path = require("path");
+const dayjs = require("dayjs");
+const utc = require("dayjs/plugin/utc");
+const timezone = require("dayjs/plugin/timezone");
+const { userInfo } = require("os");
+
+// Extend Day.js with plugins
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+// Define the Bangkok timezone
+const BANGKOK_TZ = "Asia/Bangkok";
 
 const app = express();
 app.use(express.json());
@@ -65,7 +76,7 @@ const checkForSmoke = async () => {
   }
 };
 
-setInterval(checkForSmoke, 10000);
+
 
 app.post("/register", async (req, res) => {
   const { email, password } = req.body;
@@ -77,59 +88,84 @@ app.post("/register", async (req, res) => {
   res.send("Register Successfully");
 });
 
-app.post("/login", async (req, res) => {
-  const { email, password } = req.body;
-  const [result] = await conn.query(
-    "SELECT UserID, Password FROM user WHERE Email = ?",
-    [email]
-  );
-  if (result.length === 0 || !result[0].Password) {
-    return res.status(400).send("Wrong Email or Password");
-  }
-  const match = await bcrypt.compare(password, result[0].Password);
-  if (!match) {
-    return res.status(400).send("Wrong Email or Password");
-  }
-  const token = jwt.sign(
-    { email, userID: result[0].UserID, role: "admin" },
-    secret,
-    { expiresIn: "1h" }
-  );
+// app.post("/login", async (req, res) => {
+//   const { email, password } = req.body;
+//   const [result] = await conn.query(
+//     "SELECT UserID, Password FROM user WHERE Email = ?",
+//     [email]
+//   );
+//   if (result.length === 0 || !result[0].Password) {
+//     return res.status(400).send("Wrong Email or Password");
+//   }
+//   const match = await bcrypt.compare(password, result[0].Password);
+//   if (!match) {
+//     return res.status(400).send("Wrong Email or Password");
+//   }
+//   const token = jwt.sign(
+//     { email, userID: 2, role: "admin" },
+//     // secret,
+//     // { expiresIn: "1h" }
+//   );
 
-  res.json({
-    message: "Login Successfully",
-    token,
-    isOk: match,
-  });
-});
+//   res.json({
+//     message: "Login Successfully",
+//     token,
+//     isOk: match,
+//   });
+// });
 
 app.get("/user", async (req, res) => {
   try {
-    // const user = isLogin(req);
-    // if (!user) {
-    //   throw { message: "Auth Fail" };
-    // }
-    const [result] = await conn.query(
-      `SELECT * FROM users WHERE ID = ${user.userID}`
+    const user = isLogin(req); 
+    const [userResult] = await conn.query(
+      `SELECT * FROM user WHERE ID = ?`,
+      [user.userID]
     );
-    res.send(result[0]);
+
+    if (userResult.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const [tokensResult] = await conn.query(
+      `SELECT line.LineID, line.Token AS notificationToken 
+       FROM line 
+       WHERE line.UserID = ?`,
+      [user.userID]
+    );
+
+    // Map over tokensResult to include both LineID and notificationToken
+    const notificationTokens = tokensResult.map(row => ({
+      LineID: row.LineID,
+      notificationToken: row.notificationToken
+    }));
+
+    const responseData = {
+      ...userResult[0],
+      notificationTokens,
+    };
+
+    res.json(responseData);
   } catch (error) {
-    console.log("error", error);
-    res.status(401).send("Session Expired");
+    console.error("Error in /user route:", error);
+    res.status(500).json({ message: "An error occurred" });
   }
 });
 
+
+
+
 app.post("/edit-user", async (req, res) => {
   try {
-    const { email, name, position, company, ProfilePic } = req.body;
+    const { email, username, company, phone, address,  profilePicData } =
+      req.body;
     const user = isLogin(req);
-    const query = ProfilePic
-      ? "UPDATE users SET Email = ?, Name = ?, Position = ?,Company = ?, ProfilePic = ? WHERE ID = ?"
-      : "UPDATE users SET Email = ?, Name = ?, Position = ?,Company = ? WHERE ID = ?";
+    const query = profilePicData
+      ? "UPDATE user SET Email = ?, Username = ?, Company = ?, Phone = ?, Address = ?, ProfilePic = ? WHERE ID = ?"
+      : "UPDATE user SET Email = ?, Username = ?, Company = ?, Phone = ?, Address = ? WHERE ID = ?";
 
-    const params = ProfilePic
-      ? [email, name, position, company, ProfilePic, user.userID]
-      : [email, name, position, company, user.userID];
+    const params = profilePicData
+      ? [email, username, company, phone, address, profilePicData, user.userID]
+      : [email, username, company, phone, address, user.userID];
 
     await conn.query(query, params);
     res.send("Edit User Successfully");
@@ -142,10 +178,6 @@ app.post("/edit-user", async (req, res) => {
 app.post("/edit-linetoken", async (req, res) => {
   try {
     const { lineToken, lineID } = req.body;
-    // const user = isLogin(req);
-    // if (!user) {
-    //   throw { message: "Auth Fail" };
-    // }
     await conn.query("UPDATE line SET Token = ? WHERE LineID = ?", [
       lineToken,
       lineID,
@@ -157,41 +189,33 @@ app.post("/edit-linetoken", async (req, res) => {
 
 app.post("/add-linetoken", async (req, res) => {
   try {
-    // const { lineToken } = req.body;
-    // const user = isLogin(req);
-    // if (!user) {
-    //   return res.status(401).json({ message: "Auth Fail" });
-    // }
-    await conn.query("INSERT INTO token (line, UserID) VALUES (?, ?)", [
-      lineToken,
-      user.userID,
-    ]);
-    res.status(200).json({ message: "Token added successfully" });
+    const { lineToken } = req.body;
+    const user = isLogin(req);
+    const lineTokens = Array.isArray(lineToken) ? lineToken : [lineToken];
+    const values = lineTokens.map((token) => [token,user.userID]);
+    await conn.query("INSERT INTO line (token,UserID) VALUES ?", [values]);
+    res.status(200).json({ message: "Tokens added successfully" });
   } catch (error) {
-    console.log("error", error);
+    console.error("Error adding tokens:", error);
     res.status(500).json({ message: "Internal Server Error" });
   }
 });
 
-// app.get("/real-smoke", async (req, res) => {
-//   try {
-//     // const user = isLogin(req);
-//     // if (!user) {
-//     //   return res.status(401).json({ message: "Auth Fail" });
-//     // }
+app.post("/remove-linetoken", async (req, res) => {
+  try {
+    const { lineID } = req.body; 
+    await conn.query(
+      "DELETE from line WHERE LineID = ?",
+      [lineID]
+    );
 
-//     const [result] = await conn.query(
-//       `SELECT * FROM smoke.smoke
-//          ORDER BY date_time DESC
-//          LIMIT 1`
-//     );
+    res.status(200).json({ message: "Tokens remove successfully" });
+  } catch (error) {
+    console.error("Error adding tokens:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
 
-//     res.status(200).json(result[0] || {});
-//   } catch (error) {
-//     console.error("error", error);
-//     res.status(500).json({ message: "Internal Server Error" });
-//   }
-// });
 
 app.use("/images", express.static("picture"));
 
@@ -200,9 +224,9 @@ app.get("/smoke", async (req, res) => {
     const [result] = await conn.query(
       `SELECT s.*, 
               (SELECT COUNT(*) FROM smoke.smoke 
-               WHERE DATE(date_time) = CURDATE() AND Status = 1) AS BlackCount,
+               WHERE DATE(date_time) = CURDATE() AND Status = 1) AS Black,
               (SELECT COUNT(*) FROM smoke.smoke 
-               WHERE DATE(date_time) = CURDATE() AND Status = 0) AS WhiteCount
+               WHERE DATE(date_time) = CURDATE() AND Status = 0) AS White
        FROM smoke.smoke s
        WHERE DATE(s.date_time) = CURDATE()
        ORDER BY s.date_time DESC
@@ -218,6 +242,23 @@ app.get("/smoke", async (req, res) => {
       blackCount: data.BlackCount || 0,
       whiteCount: data.WhiteCount || 0,
     };
+    if (data.Status && data.TimeOfSmoke == 5) {
+      const [tokensResult] = await conn.query("SELECT Token AS line FROM line");
+      console.log("Tokens Result:", tokensResult);
+
+      const message = "⚠️ Black smoke detected!";
+      const imagePath = "./picture/101.109.253.60.8999.jpg"
+      tokensResult.forEach((tokenRow) => {
+        const token = tokenRow.line; 
+        console.log("Sending notification to token:", token);
+        if (!token) {
+          console.error("Error: Token is undefined");
+          return;
+        }
+
+        line.callLineApi(token, message,imagePath);
+      });
+    }
 
     res.status(200).json(responseData);
   } catch (error) {
@@ -229,78 +270,94 @@ app.get("/smoke", async (req, res) => {
 app.get("/filter-smoke", async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-    // First Query
-    let normalData =[];
+    if (!startDate || !endDate) {
+      return res
+        .status(400)
+        .json({ message: "startDate and endDate are required." });
+    }
+
+    // Parse start and end dates as UTC and convert to Bangkok timezone
+    let start = dayjs.utc(startDate).tz(BANGKOK_TZ);
+    let end = dayjs.utc(endDate).tz(BANGKOK_TZ);
+
+    // Adjust end time if start and end times are the same
+    if (start.isSame(end)) {
+      end = end.add(1, "minute");
+    } else if (end.isBefore(start)) {
+      return res
+        .status(400)
+        .json({ message: "endDate must be after startDate." });
+    }
+
+    // Format dates for SQL queries in 'YYYY-MM-DD HH:mm:ss'
+    const startDateFormatted = start.format("YYYY-MM-DD HH:mm:ss");
+    const endDateFormatted = end.format("YYYY-MM-DD HH:mm:ss");
+
+    console.log(`Adjusted Start Date (Bangkok Time): ${startDateFormatted}`);
+    console.log(`Adjusted End Date (Bangkok Time): ${endDateFormatted}`);
+
+    // Initialize data containers
+    let normalData = [];
+    let dailyData = [];
+    let monthlyData = [];
+    let yearlyData = [];
+
+    // Queries
     try {
       [normalData] = await conn.query(
         `SELECT * FROM smoke 
          WHERE date_time BETWEEN ? AND ?;`,
-        [startDate, endDate]
+        [startDateFormatted, endDateFormatted]
       );
-      console.log("NOR", normalData);
     } catch (error) {
       console.error("Error in normalData query:", error);
-      res.status(500).json({ message: "Error in normalData query" });
-      return;
+      return res.status(500).json({ message: "Error in normalData query" });
     }
-
-    // Second Query
-    let dailyData = [];
     try {
       [dailyData] = await conn.query(
         `SELECT
            SUM(CASE WHEN Status = 1 THEN 1 ELSE 0 END) AS Black,
            SUM(CASE WHEN Status = 0 THEN 1 ELSE 0 END) AS White
          FROM smoke.smoke
-         WHERE date_time BETWEEN ? AND ?
-         ORDER BY No DESC`,
-        [startDate, endDate]
+         WHERE date_time BETWEEN ? AND ?;`,
+        [startDateFormatted, endDateFormatted]
       );
     } catch (error) {
       console.error("Error in dailyData query:", error);
-      res.status(500).json({ message: "Error in dailyData query" });
-      return;
+      return res.status(500).json({ message: "Error in dailyData query" });
     }
 
-    // Third Query
-    let monthlyData = [];
     try {
       [monthlyData] = await conn.query(
-        `   SELECT
-         SUM(CASE WHEN Status = 1 THEN 1 ELSE 0 END) AS Black,
-         SUM(CASE WHEN Status = 0 THEN 1 ELSE 0 END) AS White
-        FROM smoke.smoke
-        WHERE
-        YEAR(date_time) BETWEEN YEAR(?) AND YEAR(?) AND
-        MONTH(date_time) BETWEEN month(?) AND MONTH(?)
-        `,
-        [startDate, endDate, startDate, endDate]
+        `SELECT
+           SUM(CASE WHEN Status = 1 THEN 1 ELSE 0 END) AS Black,
+           SUM(CASE WHEN Status = 0 THEN 1 ELSE 0 END) AS White
+         FROM smoke.smoke
+         WHERE
+           YEAR(date_time) = YEAR(?) AND
+           MONTH(date_time) = MONTH(?);`,
+        [startDateFormatted, startDateFormatted]
       );
     } catch (error) {
       console.error("Error in monthlyData query:", error);
-      res.status(500).json({ message: "Error in monthlyData query" });
-      return;
+      return res.status(500).json({ message: "Error in monthlyData query" });
     }
 
-    // Fourth Query
-    let yearlyData = [];
     try {
       [yearlyData] = await conn.query(
         `SELECT
-         SUM(CASE WHEN Status = 1 THEN 1 ELSE 0 END) AS Black,
-         SUM(CASE WHEN Status = 0 THEN 1 ELSE 0 END) AS White
-        FROM smoke.smoke
-        WHERE
-        YEAR(date_time) BETWEEN YEAR(?) AND YEAR(?)`,
-        [startDate, endDate]
+           SUM(CASE WHEN Status = 1 THEN 1 ELSE 0 END) AS Black,
+           SUM(CASE WHEN Status = 0 THEN 1 ELSE 0 END) AS White
+         FROM smoke.smoke
+         WHERE
+           YEAR(date_time) = YEAR(?);`,
+        [startDateFormatted]
       );
     } catch (error) {
       console.error("Error in yearlyData query:", error);
-      res.status(500).json({ message: "Error in yearlyData query" });
-      return;
+      return res.status(500).json({ message: "Error in yearlyData query" });
     }
-
-    res.status(200).json({ normalData, dailyData, monthlyData,yearlyData });
+    res.status(200).json({ normalData, dailyData, monthlyData, yearlyData });
   } catch (error) {
     console.error("Error querying smoke data:", error);
     res.status(500).json({ message: "Internal Server Error" });
@@ -346,17 +403,25 @@ app.listen(port, async () => {
   console.log("run at" + port);
 });
 
-const isLogin = (req) => {
-  const authHeader = req.headers["authorization"];
-  let authToken = "";
-  if (authHeader) {
-    authToken = authHeader.split(" ")[1];
-  }
-  const user = jwt.verify(authToken, secret);
+// const isLogin = (req) => {
+//   const authHeader = req.headers["authorization"];
+//   let authToken = "";
+//   if (authHeader) {
+//     authToken = authHeader.split(" ")[1];
+//   }
+//   const user = jwt.verify(authToken, secret);
 
-  if (authToken) {
-    return user;
-  } else {
-    return null;
-  }
+//   if (authToken) {
+//     return user;
+//   } else {
+//     return null;
+//   }
+// };
+
+const isLogin = (req) => {
+  return {
+    email: "admin@gmail.com",
+    userID: 2
+  };
 };
+

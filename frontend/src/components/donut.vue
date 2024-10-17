@@ -1,5 +1,5 @@
 <template>
-    <chart class="" :options="gaugeOptions" :updateArgs="[true, true]"/>
+    <chart class="container" :options="gaugeOptions" :updateArgs="[true, true]"/>
   </template>
 <script>
 import { reactive, watch, toRefs } from 'vue'
@@ -29,7 +29,7 @@ export default {
         backgroundColor: null // Makes the background transparent
       },
       title: {
-        text: null,
+        text: '',
         align: 'left',
         style: {
           fontSize: '12px' // Set the font size here
@@ -58,7 +58,7 @@ export default {
         // itemMarginBottom: 5 // Adjust margin between legend items as needed
       },
       tooltip: {
-        headerFormat: '<span style="font-size:18px">{point.key}</span><table>',
+        // headerFormat: '<span style="font-size:18px">{point.key}</span><table>',
         pointFormat: '<tr><td style="color:{series.color};padding:0">{series.name}: </td>' +
             '<td style="padding:0; font-size: 16px"><b>{point.y}</b></td></tr>',
         footerFormat: '</table>',
@@ -68,7 +68,7 @@ export default {
       plotOptions: {
         pie: {
           allowPointSelect: true,
-          size: '40',
+          size: '60',
           dataLabels: {
             enabled: true,
             distance: 20
@@ -134,7 +134,8 @@ export default {
     if (dataMaster.data.length > 0) {
       gaugeOptions.series[0].data = dataMaster.data
       gaugeOptions.series[0].name = dataMaster.unit
-      gaugeOptions.title.text = dataMaster?.title ? dataMaster.title : ''
+      // gaugeOptions.title.text = dataMaster?.title ? dataMaster.title : ''
+      gaugeOptions.title.text = dataMaster?.title ? dataMaster.title : ""
       gaugeOptions.title.align = dataMaster?.titleAlign ? dataMaster.titleAlign : 'center'
       gaugeOptions.title.style.fontSize = dataMaster?.titleSize ? dataMaster.titleSize : '12px'
       gaugeOptions.plotOptions.pie.size = dataMaster.chartSize
@@ -164,3 +165,9 @@ export default {
   }
 }
 </script>
+<style>
+.container{
+  width: 100%;
+  height: 100%;
+}
+</style>

@@ -16,6 +16,8 @@ const props = defineProps<{
 }>();
 
 let chartInstance: Chart | null = null;
+
+// Function to calculate tick interval based on data range
 const calculateTickInterval = () => {
   const targetLabels = 10;
   const timestamps = props.data.categories.map(date => new Date(date).getTime());
@@ -24,9 +26,10 @@ const calculateTickInterval = () => {
   return tickInterval;
 };
 
+// Function to create the chart
 const createChart = () => {
   const chartContainer = document.getElementById(props.chart_id);
-  
+
   if (!chartContainer) {
     console.error('Chart container not found:', props.chart_id);
     return;
@@ -34,10 +37,27 @@ const createChart = () => {
 
   const calculatedTickInterval = calculateTickInterval();
 
+  const chartSeries = props.data.series.length
+    ? props.data.series
+    : [{
+        type: 'line',
+        name: 'No data available',
+        data: [[Date.now(), null]],
+        showInLegend: false,
+        enableMouseTracking: false,
+      } as SeriesLineOptions];
+
   const options: Options = {
     chart: {
       renderTo: chartContainer,
-      type: 'line', 
+      type: 'line',
+      zoomType: 'x',
+      panning: {
+        enabled: true,
+        type: 'x',
+      },
+      panKey: 'shift', // Optional: Hold 'Shift' to pan
+      // Removed scrollablePlotArea to prevent horizontal overflow
     },
     title: {
       text: props.title,
@@ -45,10 +65,10 @@ const createChart = () => {
     },
     xAxis: {
       type: 'datetime',
-      tickInterval: calculatedTickInterval, 
+      tickInterval: calculatedTickInterval,
       labels: {
         format: '{value:%e %b %H:%M}',
-        rotation: calculatedTickInterval < 60 * 60 * 1000 ? -45 : 0, 
+        rotation: calculatedTickInterval < 60 * 60 * 1000 ? -45 : 0,
         align: calculatedTickInterval < 60 * 60 * 1000 ? 'right' : 'center',
         style: {
           fontSize: '10px',
@@ -58,16 +78,7 @@ const createChart = () => {
       title: {
         text: '',
       },
-      dateTimeLabelFormats: {
-        millisecond: '%H:%M:%S.%L',
-        second: '%H:%M:%S',
-        minute: '%H:%M',
-        hour: '%H:%M',
-        day: '%e. %b',
-        week: '%e. %b',
-        month: '%b \'%y',
-        year: '%Y',
-      },
+      // Removed scrollbar configuration
     },
     yAxis: {
       title: {
@@ -97,10 +108,10 @@ const createChart = () => {
         },
       },
       series: {
-        turboThreshold: 0, 
+        turboThreshold: 0,
       },
     },
-    series: props.data.series,
+    series: chartSeries,
     responsive: {
       rules: [
         {
@@ -126,11 +137,10 @@ const createChart = () => {
   chartInstance = Highcharts.chart(options);
 };
 
+// Function to update the chart
 const updateChart = () => {
   if (!chartInstance) return;
-
   const calculatedTickInterval = calculateTickInterval();
-
   chartInstance.update({
     xAxis: {
       tickInterval: calculatedTickInterval,
@@ -139,14 +149,11 @@ const updateChart = () => {
         align: calculatedTickInterval < 60 * 60 * 1000 ? 'right' : 'center',
       },
     },
+    series: props.data.series.map(seriesData => ({
+      ...seriesData,
+      data: seriesData.data || [],
+    })),
   }, false);
-
-  chartInstance.series.forEach((series, index) => {
-    const seriesOptions = props.data.series[index];
-    if (seriesOptions.data) {
-      series.setData(seriesOptions.data, false, { duration: 800 });
-    }
-  });
 
   chartInstance.redraw();
 };
@@ -175,5 +182,7 @@ onBeforeUnmount(() => {
 .chart-container {
   width: 100%;
   height: 100%;
+  overflow-x: hidden; /* Prevent CSS horizontal overflow */
+  box-sizing: border-box;
 }
 </style>
